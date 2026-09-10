@@ -1,0 +1,168 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum ConsultationStatus {
+  PENDING
+  ANSWERED
+  CLOSED
+}
+
+enum MessageSender {
+  USER
+  ADMIN
+}
+
+enum Gender {
+  BOY
+  GIRL
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  password      String
+  name          String?
+  phone         String?
+  role          Role           @default(USER)
+  isVerified    Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  membership    Membership?
+  payments      Payment[]
+  consultations Consultation[]
+}
+
+model MembershipPackage {
+  id             String   @id @default(uuid())
+  name           String
+  price          Float
+  currency       String   @default("KES")
+  ticketLimit    Int?     // null = unlimited tickets
+  durationMonths Int?     // null = no expiry, e.g. 12 for 1 year
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  memberships Membership[]
+  payments    Payment[]
+}
+
+model Membership {
+  id        String           @id @default(uuid())
+  userId    String           @unique
+  packageId String?
+  status    MembershipStatus @default(INACTIVE)
+  expiresAt DateTime?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  user    User              @relation(fields: [userId], references: [id])
+  package MembershipPackage? @relation(fields: [packageId], references: [id])
+}
+
+model Payment {
+  id                   String        @id @default(uuid())
+  userId               String
+  packageId            String?
+  amount               Float
+  currency             String        @default("KES")
+  transactionReference String?
+  status               PaymentStatus @default(PENDING)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  user    User              @relation(fields: [userId], references: [id])
+  package MembershipPackage? @relation(fields: [packageId], references: [id])
+}
+
+model Consultation {
+  id                         String             @id @default(uuid())
+  userId                     String
+  motherName                 String
+  dateOfBirthMonth           String
+  dateOfBirthYear            Int
+  regularMenstrualCycle      Boolean
+  underlyingCondition        Boolean
+  underlyingConditionDetails String?
+  desiredGender              Gender
+  plannedConceptionYear      Int
+  adminResponse              String?
+  status                     ConsultationStatus @default(PENDING)
+  createdAt                  DateTime           @default(now())
+  updatedAt                  DateTime           @updatedAt
+
+  user     User @relation(fields: [userId], references: [id])
+  messages ConsultationMessage[]
+}
+
+model ConsultationMessage {
+  id              String        @id @default(uuid())
+  consultationId  String
+  sender          MessageSender
+  message         String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  consultation Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+}
+
+model EmailOtp {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  phone        String
+  passwordHash String
+  code         String
+  attempts     Int      @default(0)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([email])
+}
+
+model PasswordResetOtp {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  code      String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
+
+model LoginOtp {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  code      String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
