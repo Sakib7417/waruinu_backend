@@ -54,8 +54,11 @@ const initiatePayment = async (req, res, next) => {
           exhausted = usedSince >= existing.package.ticketLimit;
         }
         if (!exhausted) {
-          res.status(403);
-          throw new Error('Your current plan is still active. You can buy a new plan after your tickets are used or it expires.');
+          // Allow upgrading to a higher-priced plan, block same or lower plans
+          if (existing.package && pkg.price <= existing.package.price) {
+            res.status(403);
+            throw new Error('Your current plan is still active. You can only upgrade to a higher plan.');
+          }
         }
       }
     }
