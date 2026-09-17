@@ -1,5 +1,5 @@
 const prisma = require('../utils/prisma');
-const { initiateStkPush, formatPhone } = require('../services/mpesa');
+const { initiateCheckout } = require('../services/intasend');
 
 // @desc    Get membership packages
 // @route   GET /api/membership/packages
@@ -22,10 +22,6 @@ const getMembershipPackages = async (req, res, next) => {
 const initiatePayment = async (req, res, next) => {
   try {
     const { phoneNumber, packageId } = req.body;
-    if (!phoneNumber) {
-      res.status(400);
-      throw new Error('Phone number is required for M-Pesa payment');
-    }
     if (!packageId) {
       res.status(400);
       throw new Error('Please select a membership package');
@@ -64,13 +60,6 @@ const initiatePayment = async (req, res, next) => {
       }
     }
 
-    // Normalize the phone number first
-    const formatted = formatPhone(phoneNumber);
-    if (!formatted.startsWith('254') || formatted.length !== 12) {
-      res.status(400);
-      throw new Error('Invalid phone number. Use 07XX XXX XXX or 2547XX XXX XXX.');
-    }
-
     // 1. Create PENDING payment record
     const payment = await prisma.payment.create({
       data: {
@@ -82,27 +71,44 @@ const initiatePayment = async (req, res, next) => {
       },
     });
 
-    // 2. Initiate real M-Pesa STK Push
-    let stk;
+    // 2. Initiate IntaSend checkout
+    const redirectUrl = process.env.INTASEND_REDIRECT_URL;
+    const callbackUrl = process.env.INTASEND_CALLBACK_URL;
+    if (!redirectUrl || !callbackUrl) {
+      res.status(500);
+      throw new Error('IntaSend redirect or callback URL is not configured');
+    }
+
+    let checkout;
     try {
-      stk = await initiateStkPush(payment.amount, formatted);
-    } catch (stkError) {
-      // STK push failed — remove the pending record so it can't be simulated later
+      checkout = await initiateCheckout({
+        amount: payment.amount,
+        currency: payment.currency,
+        email: req.user.email,
+        name: req.user.name || req.user.email,
+        phoneNumber,
+        apiRef: payment.id,
+        redirectUrl,
+        callbackUrl,
+      });
+    } catch (checkoutError) {
+      // Checkout failed — remove the pending record so it can't be simulated later
       await prisma.payment.delete({ where: { id: payment.id } });
-      throw stkError;
+      throw checkoutError;
     }
 
     await prisma.payment.update({
       where: { id: payment.id },
-      data: { transactionReference: stk.checkoutRequestId },
+      data: { transactionReference: checkout.invoiceId },
     });
 
     res.status(200).json({
       success: true,
-      message: 'Payment initiated. Please check your phone.',
+      message: 'Redirecting to payment checkout.',
       data: {
         paymentId: payment.id,
         amount: payment.amount,
+        redirectUrl: checkout.checkoutUrl,
       },
     });
   } catch (error) {
@@ -234,30 +240,38 @@ const getUserPayments = async (req, res, next) => {
   }
 };
 
-// @desc    M-Pesa Callback
+// @desc    IntaSend webhook callback
 // @route   POST /api/membership/callback
 // @access  Public
 const mpesaCallback = async (req, res, next) => {
   try {
     const body = req.body;
-    const stkCallback = body?.Body?.stkCallback;
+    const { invoice_id, state, failed_reason } = body;
 
-    if (!stkCallback) {
+    if (!invoice_id || !state) {
       return res.status(400).json({ success: false, message: 'Invalid callback data' });
     }
 
-    const resultCode = stkCallback.ResultCode;
-    const checkoutRequestId = stkCallback.CheckoutRequestID;
+    // Optional webhook challenge validation
+    const expectedChallenge = process.env.INTASEND_WEBHOOK_CHALLENGE;
+    if (expectedChallenge && body.challenge !== expectedChallenge) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
 
     const payment = await prisma.payment.findFirst({
-      where: { transactionReference: checkoutRequestId },
+      where: { transactionReference: invoice_id },
     });
 
     if (!payment) {
       return res.status(404).json({ success: false, message: 'Payment not found' });
     }
 
-    if (String(resultCode) === '0') {
+    // Only process final states
+    if (state === 'PENDING' || state === 'PROCESSING') {
+      return res.status(200).json({ success: true, message: 'Callback received' });
+    }
+
+    if (state === 'COMPLETE') {
       await prisma.payment.update({
         where: { id: payment.id },
         data: { status: 'SUCCESS' },
