@@ -53,6 +53,31 @@ async function initiateCheckout({
   };
 }
 
+async function checkPaymentStatus(invoiceId) {
+  if (!PUBLISHABLE_KEY || !SECRET_KEY) {
+    throw new Error('INTASEND_PUBLISHABLE_KEY and INTASEND_SECRET_KEY must be set');
+  }
+
+  if (!invoiceId) {
+    throw new Error('invoiceId is required to check payment status');
+  }
+
+  const intasend = new IntaSend(PUBLISHABLE_KEY, SECRET_KEY, TEST);
+  const collection = intasend.collection();
+
+  const resp = await collection.status(invoiceId);
+
+  // Normalize the response — IntaSend returns { invoice: { state, ... } }
+  const invoice = resp.invoice || resp;
+  return {
+    invoiceId: invoice.invoice_id || invoice.id || invoiceId,
+    state: invoice.state,
+    failedReason: invoice.failed_reason || null,
+    raw: resp,
+  };
+}
+
 module.exports = {
   initiateCheckout,
+  checkPaymentStatus,
 };

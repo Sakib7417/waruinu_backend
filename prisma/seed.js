@@ -30,9 +30,21 @@ async function main() {
 
   // Create default membership packages if not exists
   const packages = [
-    { name: 'Gender Prediction', price: 1499, ticketLimit: 3, durationMonths: null },
+    { name: 'Gender Planning', price: 1499, ticketLimit: 3, durationMonths: null },
     { name: '1 Year Membership', price: 4999, ticketLimit: null, durationMonths: 12 },
   ];
+
+  // Rename legacy "Gender Prediction" package to "Gender Planning" if it exists
+  const legacy = await prisma.membershipPackage.findFirst({
+    where: { name: 'Gender Prediction' },
+  });
+  if (legacy) {
+    await prisma.membershipPackage.update({
+      where: { id: legacy.id },
+      data: { name: 'Gender Planning' },
+    });
+    console.log('Renamed package: Gender Prediction -> Gender Planning');
+  }
 
   for (const pkg of packages) {
     const existing = await prisma.membershipPackage.findFirst({

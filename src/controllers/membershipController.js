@@ -1,5 +1,5 @@
 const prisma = require('../utils/prisma');
-const { initiateCheckout } = require('../services/intasend');
+const { initiateCheckout, checkPaymentStatus } = require('../services/intasend');
 
 // @desc    Get membership packages
 // @route   GET /api/membership/packages
@@ -135,6 +135,15 @@ async function activateMembership(userId, packageId) {
   const existingMembership = await prisma.membership.findUnique({
     where: { userId },
   });
+
+  // Idempotent: skip if already active on the same package
+  if (
+    existingMembership &&
+    existingMembership.status === 'ACTIVE' &&
+    existingMembership.packageId === pkg.id
+  ) {
+    return;
+  }
 
   if (existingMembership) {
     await prisma.membership.update({
@@ -303,10 +312,92 @@ const mpesaCallback = async (req, res, next) => {
   }
 };
 
+// @desc    Verify payment status (fallback for webhook)
+// @route   POST /api/membership/verify-payment
+// @access  Private
+const verifyPayment = async (req, res, next) => {
+  try {
+    const { paymentId } = req.body;
+    if (!paymentId) {
+      res.status(400);
+      throw new Error('paymentId is required');
+    }
+
+    const payment = await prisma.payment.findFirst({
+      where: { id: paymentId, userId: req.user.id },
+    });
+
+    if (!payment) {
+      res.status(404);
+      throw new Error('Payment not found');
+    }
+
+    // If payment is already marked SUCCESS, just (re)activate membership and return
+    if (payment.status === 'SUCCESS') {
+      if (payment.packageId) {
+        await activateMembership(payment.userId, payment.packageId);
+      }
+      return res.status(200).json({
+        success: true,
+        message: 'Payment already confirmed',
+        data: { paymentId: payment.id, status: 'SUCCESS' },
+      });
+    }
+
+    // Otherwise query IntaSend for the live status using the invoice id
+    const invoiceId = payment.transactionReference;
+    if (!invoiceId || invoiceId === 'SIMULATED') {
+      res.status(400);
+      throw new Error('No IntaSend invoice linked to this payment');
+    }
+
+    const result = await checkPaymentStatus(invoiceId);
+
+    if (result.state === 'COMPLETE') {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'SUCCESS' },
+      });
+
+      if (payment.packageId) {
+        await activateMembership(payment.userId, payment.packageId);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Payment confirmed and membership activated',
+        data: { paymentId: payment.id, status: 'SUCCESS', state: result.state },
+      });
+    }
+
+    if (result.state === 'FAILED') {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'FAILED' },
+      });
+      return res.status(200).json({
+        success: true,
+        message: 'Payment failed',
+        data: { paymentId: payment.id, status: 'FAILED', state: result.state, failedReason: result.failedReason },
+      });
+    }
+
+    // Still pending/processing
+    return res.status(200).json({
+      success: true,
+      message: 'Payment is still pending',
+      data: { paymentId: payment.id, status: 'PENDING', state: result.state },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getMembershipPackages,
   initiatePayment,
   simulatePayment,
+  verifyPayment,
   getUserPayments,
   mpesaCallback,
 };
