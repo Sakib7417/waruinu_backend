@@ -91,7 +91,7 @@ async function checkPaymentStatus(reference, checkoutSignature) {
     // Existing payments stored the checkout UUID, not the invoice_id.
     // Use the invoices list API to find the invoice by api_ref (which is the payment UUID).
     const listPath = `/api/v1/invoices/?api_ref=${encodeURIComponent(reference)}`;
-    const listResp = await intasend.send(null, listPath, 'GET');
+    const listResp = await intasend.send({}, listPath, 'GET');
     console.log('[IntaSend invoices list] ref:', reference, 'resp:', JSON.stringify(listResp));
 
     // Try to find the invoice in the list. Common response shapes: { results: [...] } or { invoices: [...] }
