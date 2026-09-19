@@ -88,16 +88,31 @@ async function checkPaymentStatus(reference, checkoutSignature) {
   let resp;
 
   if (isUuid(reference)) {
-    // Existing payments only have the checkout UUID stored.
-    // Try status by checkout_id first; if that fails, try api_ref.
-    const payload = { checkout_id: reference };
-    if (checkoutSignature) {
-      payload.signature = checkoutSignature;
-    }
-    resp = await intasend.send(payload, '/api/v1/payment/status/', 'POST');
+    // Existing payments stored the checkout UUID, not the invoice_id.
+    // Use the invoices list API to find the invoice by api_ref (which is the payment UUID).
+    const listPath = `/api/v1/invoices/?api_ref=${encodeURIComponent(reference)}`;
+    const listResp = await intasend.send(null, listPath, 'GET');
+    console.log('[IntaSend invoices list] ref:', reference, 'resp:', JSON.stringify(listResp));
 
-    if (!resp.invoice && !resp.state && resp.detail) {
-      resp = await intasend.send({ api_ref: reference }, '/api/v1/payment/status/', 'POST');
+    // Try to find the invoice in the list. Common response shapes: { results: [...] } or { invoices: [...] }
+    const invoices = listResp.results || listResp.invoices || listResp;
+    const invoice = Array.isArray(invoices) ? invoices[0] : null;
+
+    if (invoice) {
+      // Normalize — use invoice state directly if present, otherwise query status by invoice_id
+      const invoiceId = invoice.invoice_id || invoice.id;
+      if (invoice.state !== undefined) {
+        resp = { invoice };
+      } else if (invoiceId) {
+        resp = await intasend.send({ invoice_id: invoiceId }, '/api/v1/payment/status/', 'POST');
+      }
+    }
+
+    if (!resp) {
+      // Fallback to checkout_id status (if checkout signature is available)
+      const payload = { checkout_id: reference };
+      if (checkoutSignature) payload.signature = checkoutSignature;
+      resp = await intasend.send(payload, '/api/v1/payment/status/', 'POST');
     }
   } else {
     resp = await intasend.send({ invoice_id: reference }, '/api/v1/payment/status/', 'POST');
