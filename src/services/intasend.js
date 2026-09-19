@@ -74,7 +74,7 @@ async function initiateCheckout({
   };
 }
 
-async function checkPaymentStatus(reference) {
+async function checkPaymentStatus(reference, checkoutSignature) {
   if (!PUBLISHABLE_KEY || !SECRET_KEY) {
     throw new Error('INTASEND_PUBLISHABLE_KEY and INTASEND_SECRET_KEY must be set');
   }
@@ -87,10 +87,18 @@ async function checkPaymentStatus(reference) {
 
   let resp;
 
-  // Existing payments stored the api_ref (UUID). New ones store the short invoice_id.
-  // Try the appropriate endpoint based on the input format.
   if (isUuid(reference)) {
-    resp = await intasend.send({ api_ref: reference }, '/api/v1/payment/status/', 'POST');
+    // Existing payments only have the checkout UUID stored.
+    // Try status by checkout_id first; if that fails, try api_ref.
+    const payload = { checkout_id: reference };
+    if (checkoutSignature) {
+      payload.signature = checkoutSignature;
+    }
+    resp = await intasend.send(payload, '/api/v1/payment/status/', 'POST');
+
+    if (!resp.invoice && !resp.state && resp.detail) {
+      resp = await intasend.send({ api_ref: reference }, '/api/v1/payment/status/', 'POST');
+    }
   } else {
     resp = await intasend.send({ invoice_id: reference }, '/api/v1/payment/status/', 'POST');
   }

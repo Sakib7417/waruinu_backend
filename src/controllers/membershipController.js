@@ -270,13 +270,30 @@ const mpesaCallback = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
+    // The webhook sends api_ref (our payment.id / checkout UUID) as well as invoice_id.
+    // We initially store the checkout UUID as transactionReference, so find by api_ref.
+    const where = body.api_ref
+      ? { transactionReference: body.api_ref }
+      : { transactionReference: invoice_id };
+
     const payment = await prisma.payment.findFirst({
-      where: { transactionReference: invoice_id },
+      where,
     });
 
     if (!payment) {
       return res.status(404).json({ success: false, message: 'Payment not found' });
     }
+
+    // Update the stored transactionReference to the actual IntaSend invoice_id
+    const updateData = { status: state === 'COMPLETE' ? 'SUCCESS' : state };
+    if (invoice_id) {
+      updateData.transactionReference = invoice_id;
+    }
+
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: updateData,
+    });
 
     // Only process final states
     if (state === 'PENDING' || state === 'PROCESSING') {
@@ -284,11 +301,6 @@ const mpesaCallback = async (req, res, next) => {
     }
 
     if (state === 'COMPLETE') {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: 'SUCCESS' },
-      });
-
       if (payment.packageId) {
         await activateMembership(payment.userId, payment.packageId);
       } else {
@@ -299,11 +311,6 @@ const mpesaCallback = async (req, res, next) => {
         });
         if (pkg) await activateMembership(payment.userId, pkg.id);
       }
-    } else {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: 'FAILED' },
-      });
     }
 
     res.status(200).json({ success: true, message: 'Callback received' });
