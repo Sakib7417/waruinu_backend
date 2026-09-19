@@ -240,6 +240,7 @@ const verifyAdminPayment = async (req, res, next) => {
     }
 
     const result = await checkPaymentStatus(invoiceId);
+    console.log('[IntaSend status] invoice:', invoiceId, 'result:', JSON.stringify(result));
 
     if (result.state === 'COMPLETE') {
       await prisma.payment.update({
