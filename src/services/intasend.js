@@ -74,7 +74,7 @@ async function initiateCheckout({
   };
 }
 
-async function checkPaymentStatus(reference, checkoutSignature) {
+async function checkPaymentStatus(reference, apiRef) {
   if (!PUBLISHABLE_KEY || !SECRET_KEY) {
     throw new Error('INTASEND_PUBLISHABLE_KEY and INTASEND_SECRET_KEY must be set');
   }
@@ -87,19 +87,16 @@ async function checkPaymentStatus(reference, checkoutSignature) {
 
   let resp;
 
-  if (isUuid(reference)) {
-    // Existing payments stored the checkout UUID, not the invoice_id.
-    // Use the invoices list API to find the invoice by api_ref (which is the payment UUID).
-    const listPath = `/api/v1/invoices/?api_ref=${encodeURIComponent(reference)}`;
+  // If we have the real api_ref (payment.id stored in our DB as api_ref), query by that first.
+  if (apiRef && isUuid(apiRef)) {
+    const listPath = `/api/v1/invoices/?api_ref=${encodeURIComponent(apiRef)}`;
     const listResp = await intasend.send({}, listPath, 'GET');
-    console.log('[IntaSend invoices list] ref:', reference, 'resp:', JSON.stringify(listResp));
+    console.log('[IntaSend invoices list] apiRef:', apiRef, 'resp:', JSON.stringify(listResp));
 
-    // Try to find the invoice in the list. Common response shapes: { results: [...] } or { invoices: [...] }
     const invoices = listResp.results || listResp.invoices || listResp;
     const invoice = Array.isArray(invoices) ? invoices[0] : null;
 
     if (invoice) {
-      // Normalize — use invoice state directly if present, otherwise query status by invoice_id
       const invoiceId = invoice.invoice_id || invoice.id;
       if (invoice.state !== undefined) {
         resp = { invoice };
@@ -107,15 +104,15 @@ async function checkPaymentStatus(reference, checkoutSignature) {
         resp = await intasend.send({ invoice_id: invoiceId }, '/api/v1/payment/status/', 'POST');
       }
     }
+  }
 
-    if (!resp) {
-      // Fallback to checkout_id status (if checkout signature is available)
-      const payload = { checkout_id: reference };
-      if (checkoutSignature) payload.signature = checkoutSignature;
-      resp = await intasend.send(payload, '/api/v1/payment/status/', 'POST');
+  // Fallback: use reference as invoice_id if it's short, or checkout_id if it's a UUID.
+  if (!resp) {
+    if (isUuid(reference)) {
+      resp = await intasend.send({ checkout_id: reference }, '/api/v1/payment/status/', 'POST');
+    } else {
+      resp = await intasend.send({ invoice_id: reference }, '/api/v1/payment/status/', 'POST');
     }
-  } else {
-    resp = await intasend.send({ invoice_id: reference }, '/api/v1/payment/status/', 'POST');
   }
 
   console.log('[IntaSend status] ref:', reference, 'resp:', JSON.stringify(resp));

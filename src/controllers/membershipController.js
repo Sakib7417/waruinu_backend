@@ -358,7 +358,7 @@ const verifyPayment = async (req, res, next) => {
       throw new Error('No IntaSend invoice linked to this payment');
     }
 
-    const result = await checkPaymentStatus(invoiceId);
+    const result = await checkPaymentStatus(invoiceId, payment.id);
 
     if (result.state === 'COMPLETE') {
       await prisma.payment.update({
