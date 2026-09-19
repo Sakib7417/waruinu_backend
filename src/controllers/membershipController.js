@@ -400,4 +400,5 @@ module.exports = {
   verifyPayment,
   getUserPayments,
   mpesaCallback,
+  activateMembership,
 };

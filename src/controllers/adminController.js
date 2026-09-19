@@ -1,4 +1,6 @@
 const prisma = require('../utils/prisma');
+const { checkPaymentStatus } = require('../services/intasend');
+const { activateMembership } = require('./membershipController');
 
 // @desc    Get all membership packages
 // @route   GET /api/admin/packages
@@ -206,6 +208,78 @@ const getAdminUsers = async (req, res, next) => {
   }
 };
 
+// @desc    Verify a pending payment and activate membership (admin only)
+// @route   POST /api/admin/payments/:id/verify
+// @access  Private/Admin
+const verifyAdminPayment = async (req, res, next) => {
+  try {
+    const payment = await prisma.payment.findUnique({
+      where: { id: req.params.id },
+    });
+
+    if (!payment) {
+      res.status(404);
+      throw new Error('Payment not found');
+    }
+
+    if (payment.status === 'SUCCESS') {
+      if (payment.packageId) {
+        await activateMembership(payment.userId, payment.packageId);
+      }
+      return res.status(200).json({
+        success: true,
+        message: 'Payment already confirmed',
+        data: { paymentId: payment.id, status: 'SUCCESS' },
+      });
+    }
+
+    const invoiceId = payment.transactionReference;
+    if (!invoiceId || invoiceId === 'SIMULATED') {
+      res.status(400);
+      throw new Error('No IntaSend invoice linked to this payment');
+    }
+
+    const result = await checkPaymentStatus(invoiceId);
+
+    if (result.state === 'COMPLETE') {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'SUCCESS' },
+      });
+
+      if (payment.packageId) {
+        await activateMembership(payment.userId, payment.packageId);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Payment confirmed and membership activated',
+        data: { paymentId: payment.id, status: 'SUCCESS', state: result.state },
+      });
+    }
+
+    if (result.state === 'FAILED') {
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { status: 'FAILED' },
+      });
+      return res.status(200).json({
+        success: true,
+        message: 'Payment failed',
+        data: { paymentId: payment.id, status: 'FAILED', state: result.state, failedReason: result.failedReason },
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Payment is still pending',
+      data: { paymentId: payment.id, status: 'PENDING', state: result.state },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get all payments
 // @route   GET /api/admin/payments
 // @access  Private/Admin
@@ -234,4 +308,5 @@ module.exports = {
   replyConsultation,
   closeConsultation,
   getDashboardSummary,
+  verifyAdminPayment,
 };

@@ -11,6 +11,7 @@ const {
   replyConsultation,
   closeConsultation,
   getDashboardSummary,
+  verifyAdminPayment,
 } = require('../controllers/adminController');
 
 // All routes are protected and require admin role
@@ -42,5 +43,8 @@ router.route('/users')
 
 router.route('/payments')
   .get(getAdminPayments);
+
+router.route('/payments/:id/verify')
+  .post(verifyAdminPayment);
 
 module.exports = router;
