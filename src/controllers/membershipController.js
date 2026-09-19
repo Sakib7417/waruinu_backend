@@ -266,7 +266,7 @@ const mpesaCallback = async (req, res, next) => {
 
     // Optional webhook challenge validation
     const expectedChallenge = process.env.INTASEND_WEBHOOK_CHALLENGE;
-    if (expectedChallenge && body.challenge !== expectedChallenge) {
+    if (expectedChallenge && body.challenge && body.challenge !== expectedChallenge) {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
